@@ -1,55 +1,47 @@
-// Default parameter input
-params.str = "Hello world!"
+// define input parameters
+params.input = "/data/*.fq"
+params.outdir = "results"
 
-// split process
-process split {
-    publishDir "results/lower"
+// Process 1: Run FastQC on each file
+process fastqc {
+    publishDir "${params.outdir}/fastqc", mode: 'copy'
 
-    input:
-    val x
+    input: 
+    path fastq_file
 
     output:
-    path 'chunk_*'
+    path "*.html", emit: html
+    path "*.zip", emit: zip
 
     script:
     """
-    printf '${x}' | split -b 6 - chunk_
+    fastqc ${fastq_file} --outdir .
     """
 }
 
-// convert_to_upper process
-process convert_to_upper {
-    tag "$y"
+// Process 2: Aggregate FastQC results with MultiQC
+process multiqc {
+    publishDir "${params.outdir}", mode: 'copy'
 
     input:
-    path y
+    path('fastqc/*')
 
     output:
-    path 'upper_*'
+    path "multiqc_report.html"
+    path "multiqc_data", type: 'dir'
 
     script:
     """
-    cat $y | tr '[a-z]' '[A-Z]' > upper_${y}
+    multiqc .
     """
 }
 
-// Workflow block
+// Define workflow
 workflow {
-    main:
-    ch_str = channel.of(params.str) // Create channel using parameter input
-    ch_chunks = split(ch_str) // Split string into chunks and create a named channel
-    ch_upper = convert_to_upper(ch_chunks.flatten()) // Convert lowercase letters to uppercase
+    
+    // Create channel from input fastq files
+    Channel.fromPath(params.input).set{fastq_ch}
 
-    publish:
-    lower = ch_chunks.flatten()
-    upper = ch_upper
-}
-
-output {
-    lower {
-        path 'lower'
-    }
-    upper {
-        path 'upper'
-    }
+    fastqc_results = fastqc(fastq_ch)
+    multiqc(fastqc_results.zip.collect()) // collect all fastqc_results together before multiqc
 }
